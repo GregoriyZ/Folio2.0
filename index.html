@@ -623,7 +623,7 @@ body{
       </label>
     </div>
     <div style="display:flex;gap:6px;margin-top:6px">
-      <button class="btn btn-secondary btn-sm" style="flex:1;font-size:0.72rem;padding:6px 8px;background:var(--green-light);color:var(--green);border:1px solid rgba(52,199,89,0.2)" onclick="cloudSave()" title="Push local data to cloud">☁ Push</button>
+      <button class="btn btn-secondary btn-sm" style="flex:1;font-size:0.72rem;padding:6px 8px;background:var(--green-light);color:var(--green);border:1px solid rgba(52,199,89,0.2)" onclick="cloudSave(true)" title="Push local data to cloud">☁ Push</button>
       <button class="btn btn-secondary btn-sm" style="flex:1;font-size:0.72rem;padding:6px 8px;background:var(--teal-light);color:var(--accent);border:1px solid rgba(90,200,250,0.2)" onclick="cloudPull()" title="Pull data from cloud">☁ Pull</button>
     </div>
   </div>
@@ -1160,7 +1160,14 @@ function normalizeCloudData(data) {
   };
 }
 
-async function cloudSave() {
+function getCloudSetupHint() {
+  if (window.location.protocol === 'file:') {
+    return 'Run this app on a hosted URL (or localhost server) with /api/data enabled.';
+  }
+  return 'Check that your deployed backend route /api/data is running.';
+}
+
+async function cloudSave(withToast = false) {
   try {
     setSyncStatus('syncing');
     const customCats = dbQuery("SELECT * FROM categories");
@@ -1179,15 +1186,17 @@ async function cloudSave() {
       throw new Error('Cloud save failed: ' + (text || res.status));
     }
     setSyncStatus('synced');
+    if (withToast) showToast('Cloud push successful');
   } catch (e) {
     console.warn('Cloud sync error:', e);
     setSyncStatus('error');
+    if (withToast) showToast((e && e.message ? e.message + '. ' : 'Cloud push failed. ') + getCloudSetupHint(), 'error');
   }
 }
 
 function scheduleCloudSync() {
   clearTimeout(_cloudSyncTimer);
-  _cloudSyncTimer = setTimeout(cloudSave, 1500);
+  _cloudSyncTimer = setTimeout(() => cloudSave(false), 1500);
 }
 
 async function cloudLoad() {
@@ -1220,10 +1229,17 @@ function setSyncStatus(state) {
 
 async function cloudPull() {
   setSyncStatus('syncing');
-  const cloudData = await cloudLoad();
+  let cloudData = null;
+  try {
+    cloudData = await cloudLoad();
+  } catch (e) {
+    showToast('Cloud pull failed. ' + getCloudSetupHint(), 'error');
+    setSyncStatus('error');
+    return;
+  }
   if (!cloudData || !cloudData.transactions || cloudData.transactions.length === 0) {
-    showToast('No data found in cloud', 'error');
-    setSyncStatus('synced');
+    showToast('No data found in cloud (or cloud is unreachable)', 'error');
+    setSyncStatus('offline');
     return;
   }
   // Rebuild local DB from cloud
@@ -1510,8 +1526,8 @@ function importSQLite(event){
       let txCount=0;
       importedTxs.forEach(t=>{
         try{
-          db.run('INSERT OR REPLACE INTO transactions VALUES (?,?,?,?,?,?,?)',
-            [t.id,t.type,t.amount,t.description||'',t.category||'',t.date,t.note||'']);
+          db.run('INSERT OR REPLACE INTO transactions (id,type,amount,description,category,date,note,bucket) VALUES (?,?,?,?,?,?,?,?)',
+            [t.id,t.type,t.amount,t.description||'',t.category||'',t.date,t.note||'',t.bucket||'none']);
           txCount++;
         }catch(e){}
       });
